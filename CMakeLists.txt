@@ -1,3 +1,5 @@
+
+# File: CMakeLists.txt
 cmake_minimum_required(VERSION 3.22)
 project(cuHyperDual LANGUAGES CXX CUDA)
 
@@ -27,17 +29,15 @@ target_compile_options(hyperdual PRIVATE
   $<$<COMPILE_LANGUAGE:CXX>:-O3>
 )
 
-
 # File: include/hyperdual.cuh
 #pragma once
 #include <cuda_runtime.h>
 #include <math.h>
 #include <type_traits>
 
-// Hyper-dual number: r + e1*ε1 + e2*ε2 + e12*ε1ε2
-// εi^2 = 0, ε1ε2 = ε2ε1
-//
-// Stores four scalars; arithmetic is branchless and GPU-friendly.
+// =====================
+// Hyper-dual (2-dir, 2nd order mixed) type
+// =====================
 
 template <typename T>
 struct HD {
@@ -47,15 +47,13 @@ struct HD {
       : r(r_), e1(e1_), e2(e2_), e12(e12_) {}
 };
 
-// Seeds for ∂/∂x and ∂/∂y
-
 template <typename T>
 __host__ __device__ inline HD<T> make_seed_x(T x){ return HD<T>(x, T(1), T(0), T(0)); }
 
 template <typename T>
 __host__ __device__ inline HD<T> make_seed_y(T y){ return HD<T>(y, T(0), T(1), T(0)); }
 
-// Basic arithmetic
+// Basic arithmetic (HD)
 
 template <typename T>
 __host__ __device__ inline HD<T> operator+(const HD<T>& a, const HD<T>& b){
@@ -95,7 +93,7 @@ __host__ __device__ inline HD<T> operator/(const HD<T>& u, const HD<T>& v){
   return u * inv(v);
 }
 
-// Unary function lifts: implement explicitly to avoid device-lambda issues
+// Unary lifts (HD)
 
 template <typename T>
 __host__ __device__ inline HD<T> hsin(const HD<T>& x){
@@ -137,32 +135,94 @@ __host__ __device__ inline HD<T> hpow(const HD<T>& x, T a){
   return HD<T>(r, fr * x.e1, fr * x.e2, f2 * (x.e1 * x.e2) + fr * x.e12);
 }
 
-// Convenience ops
-
-template <typename T>
-__host__ __device__ inline HD<T> hadd(const HD<T>& a, const HD<T>& b){ return a + b; }
-
-template <typename T>
-__host__ __device__ inline HD<T> hsub(const HD<T>& a, const HD<T>& b){ return a - b; }
-
-//////////////////////////////////////////
-// Example target function f(x,y)
-//////////////////////////////////////////
+// Example target function f(x,y) using HD
 
 template <typename T>
 __host__ __device__ inline HD<T> f_xy(const HD<T>& x, const HD<T>& y){
-  // f(x,y) = sin(x*y) + exp(x) / log(1 + y)
   HD<T> term1 = hsin(x * y);
   HD<T> denom = hlog( HD<T>(T(1)) + y );
   HD<T> term2 = hexp(x) / denom;
   return term1 + term2;
 }
 
+// =====================
+// Multi-dual (K-dir, 1st order) type for full Jacobian columns
+// =====================
 
+template <int K, typename T>
+struct MD {
+  T r;            // primal
+  T e[K];         // first-order components along K seed directions
+  __host__ __device__ MD() = default;
+  __host__ __device__ explicit MD(T r_): r(r_) { for(int i=0;i<K;++i) e[i]=T(0); }
+  __host__ __device__ MD(T r_, const T* v){ r=r_; for(int i=0;i<K;++i) e[i]=v[i]; }
+};
+
+// seed basis vector j for variable value x
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> make_seed(T x, int j){
+  MD<K,T> a; a.r = x; for(int i=0;i<K;++i) a.e[i]=T(0); if(j>=0 && j<K) a.e[j]=T(1); return a;
+}
+
+// MD ops
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> operator+(const MD<K,T>& a, const MD<K,T>& b){
+  MD<K,T> c; c.r = a.r + b.r; for(int i=0;i<K;++i) c.e[i]=a.e[i]+b.e[i]; return c;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> operator-(const MD<K,T>& a, const MD<K,T>& b){
+  MD<K,T> c; c.r = a.r - b.r; for(int i=0;i<K;++i) c.e[i]=a.e[i]-b.e[i]; return c;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> operator*(const MD<K,T>& u, const MD<K,T>& v){
+  MD<K,T> c; c.r = u.r * v.r; for(int i=0;i<K;++i) c.e[i] = u.e[i]*v.r + u.r*v.e[i]; return c;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> inv(const MD<K,T>& v){
+  MD<K,T> w; const T vr=v.r; const T vr2=vr*vr; w.r = T(1)/vr; for(int i=0;i<K;++i) w.e[i] = -v.e[i]/vr2; return w;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> operator/(const MD<K,T>& u, const MD<K,T>& v){ return u*inv(v); }
+
+// Unary lifts (MD)
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> md_sin(const MD<K,T>& x){
+  MD<K,T> y; y.r = sin(x.r); const T fr=cos(x.r); for(int i=0;i<K;++i) y.e[i]=fr*x.e[i]; return y;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> md_exp(const MD<K,T>& x){
+  MD<K,T> y; y.r = exp(x.r); for(int i=0;i<K;++i) y.e[i]=y.r*x.e[i]; return y;
+}
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> md_log(const MD<K,T>& x){
+  MD<K,T> y; y.r = log(x.r); const T fr=T(1)/x.r; for(int i=0;i<K;++i) y.e[i]=fr*x.e[i]; return y;
+}
+
+// Example f(x,y) using MD (K>=2)
+
+template <int K, typename T>
+__host__ __device__ inline MD<K,T> f_xy_md(const MD<K,T>& x, const MD<K,T>& y){
+  MD<K,T> term1 = md_sin<K,T>(x * y);
+  MD<K,T> denom = md_log<K,T>( MD<K,T>(T(1)) + y );
+  MD<K,T> term2 = md_exp<K,T>(x) / denom;
+  return term1 + term2;
+}
+
+########################################
 # File: src/kernel.cu
+########################################
 #include "hyperdual.cuh"
 
-// Evaluate f(x,y) for a batch, returning value and derivatives via hyper-dual
+// ===== Existing HD batch kernel (value + dx,dy,dxy) =====
 
 template <typename T>
 __global__ void eval_batch_kernel(
@@ -179,7 +239,6 @@ __global__ void eval_batch_kernel(
 
   HD<T> hx = make_seed_x<T>(x[i]);
   HD<T> hy = make_seed_y<T>(y[i]);
-
   HD<T> h = f_xy(hx, hy);
 
   out_r  [i] = h.r;
@@ -193,8 +252,7 @@ extern "C" void launch_eval_batch_float(
     float* r, float* dx, float* dy, float* dxy, int n,
     cudaStream_t stream)
 {
-  dim3 blk(256);
-  dim3 grd((n + blk.x - 1) / blk.x);
+  dim3 blk(256); dim3 grd((n + blk.x - 1) / blk.x);
   eval_batch_kernel<float><<<grd, blk, 0, stream>>>(x, y, r, dx, dy, dxy, n);
 }
 
@@ -203,11 +261,50 @@ extern "C" void launch_eval_batch_double(
     double* r, double* dx, double* dy, double* dxy, int n,
     cudaStream_t stream)
 {
-  dim3 blk(256);
-  dim3 grd((n + blk.x - 1) / blk.x);
+  dim3 blk(256); dim3 grd((n + blk.x - 1) / blk.x);
   eval_batch_kernel<double><<<grd, blk, 0, stream>>>(x, y, r, dx, dy, dxy, n);
 }
 
+// ===== NEW: Multi-dual Jacobian columns for K=2 (x,y) =====
+// For each sample i, seeds basis e0 for x and e1 for y, evaluates f(x,y) once
+// and writes J[:,i] = [df/dx, df/dy].
+
+template <typename T>
+__global__ void eval_jac2_kernel(
+    const T* __restrict__ x,
+    const T* __restrict__ y,
+    T* __restrict__ out_f,
+    T* __restrict__ out_jx,
+    T* __restrict__ out_jy,
+    int n)
+{
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  if (i >= n) return;
+
+  MD<2,T> mx = make_seed<2,T>(x[i], 0); // seed dir 0 for x
+  MD<2,T> my = make_seed<2,T>(y[i], 1); // seed dir 1 for y
+  MD<2,T> h  = f_xy_md<2,T>(mx, my);
+
+  out_f [i] = h.r;
+  out_jx[i] = h.e[0];
+  out_jy[i] = h.e[1];
+}
+
+extern "C" void launch_eval_jac2_double(
+    const double* x, const double* y,
+    double* f, double* jx, double* jy, int n, cudaStream_t stream)
+{
+  dim3 blk(256); dim3 grd((n + blk.x - 1) / blk.x);
+  eval_jac2_kernel<double><<<grd, blk, 0, stream>>>(x,y,f,jx,jy,n);
+}
+
+extern "C" void launch_eval_jac2_float(
+    const float* x, const float* y,
+    float* f, float* jx, float* jy, int n, cudaStream_t stream)
+{
+  dim3 blk(256); dim3 grd((n + blk.x - 1) / blk.x);
+  eval_jac2_kernel<float><<<grd, blk, 0, stream>>>(x,y,f,jx,jy,n);
+}
 
 ########################################
 # File: src/main.cu
@@ -227,17 +324,21 @@ extern "C" void launch_eval_batch_double(
     const double* x, const double* y,
     double* r, double* dx, double* dy, double* dxy, int n,
     cudaStream_t stream);
+extern "C" void launch_eval_jac2_double(
+    const double* x, const double* y,
+    double* f, double* jx, double* jy, int n, cudaStream_t stream);
+extern "C" void launch_eval_jac2_float(
+    const float* x, const float* y,
+    float* f, float* jx, float* jy, int n, cudaStream_t stream);
 
-// CPU reference: finite differences (central)
+// CPU reference
+
 template <typename T>
-T f_scalar(T x, T y){
-  return sin(x*y) + exp(x)/log(1+y);
-}
+T f_scalar(T x, T y){ return sin(x*y) + exp(x)/log(1+y); }
 
 template <typename T>
 void finite_diff(T x, T y, T& fx, T& dfx, T& dfy, T& dxy){
-  const T h = 1e-6;
-  const T hh = 1e-4; // larger step for mixed to reduce cancellation
+  const T h = 1e-6; const T hh = 1e-4;
   fx = f_scalar<T>(x,y);
   dfx = (f_scalar<T>(x+h,y) - f_scalar<T>(x-h,y)) / (2*h);
   dfy = (f_scalar<T>(x,y+h) - f_scalar<T>(x,y-h)) / (2*h);
@@ -246,69 +347,81 @@ void finite_diff(T x, T y, T& fx, T& dfx, T& dfy, T& dxy){
 }
 
 int main(){
-  using T = double; // switch to float for speed tests
-  const int N = 1<<20; // 1M samples
+  using T = double; // toggle float/double
+  const int N = 1<<20;
 
   std::mt19937 rng(42);
   std::uniform_real_distribution<T> dist_x(0.1, 2.0);
-  std::uniform_real_distribution<T> dist_y(0.05, 1.5);
+  std::uniform_real_distribution<T> dist_y(0.05,1.5);
 
   std::vector<T> hx(N), hy(N);
   for(int i=0;i<N;++i){ hx[i]=dist_x(rng); hy[i]=dist_y(rng); }
 
-  T *dx_x, *dx_y, *dr, *ddx, *ddy, *ddxy;
+  // Device buffers
+  T *dx_x,*dx_y,*dr,*ddx,*ddy,*ddxy; // HD path
+  T *jf,*jjx,*jjy;                   // MD (Jacobian) path
   cudaMalloc(&dx_x,  N*sizeof(T));
   cudaMalloc(&dx_y,  N*sizeof(T));
   cudaMalloc(&dr,    N*sizeof(T));
   cudaMalloc(&ddx,   N*sizeof(T));
   cudaMalloc(&ddy,   N*sizeof(T));
   cudaMalloc(&ddxy,  N*sizeof(T));
-
+  cudaMalloc(&jf,    N*sizeof(T));
+  cudaMalloc(&jjx,   N*sizeof(T));
+  cudaMalloc(&jjy,   N*sizeof(T));
   cudaMemcpy(dx_x, hx.data(), N*sizeof(T), cudaMemcpyHostToDevice);
   cudaMemcpy(dx_y, hy.data(), N*sizeof(T), cudaMemcpyHostToDevice);
 
   cudaStream_t stream; cudaStreamCreate(&stream);
 
-  // Warm-up + run
-  if constexpr (std::is_same<T,double>::value){
+  // Run HD path once
+  if constexpr (std::is_same<T,double>::value) {
     launch_eval_batch_double(dx_x, dx_y, dr, ddx, ddy, ddxy, N, stream);
   } else {
     launch_eval_batch_float((float*)dx_x, (float*)dx_y, (float*)dr, (float*)ddx, (float*)ddy, (float*)ddxy, N, stream);
   }
   cudaStreamSynchronize(stream);
 
-  // Copy back a small sample to verify numerics
-  std::vector<T> hr(10), hdx(10), hdy(10), hdxy(10);
-  cudaMemcpy(hr.data(),   dr,   10*sizeof(T), cudaMemcpyDeviceToHost);
-  cudaMemcpy(hdx.data(),  ddx,  10*sizeof(T), cudaMemcpyDeviceToHost);
-  cudaMemcpy(hdy.data(),  ddy,  10*sizeof(T), cudaMemcpyDeviceToHost);
-  cudaMemcpy(hdxy.data(), ddxy,10*sizeof(T), cudaMemcpyDeviceToHost);
+  // Run MD (Jacobian columns with K=2) once
+  if constexpr (std::is_same<T,double>::value) {
+    launch_eval_jac2_double(dx_x, dx_y, jf, jjx, jjy, N, stream);
+  } else {
+    launch_eval_jac2_float((float*)dx_x, (float*)dx_y, (float*)jf, (float*)jjx, (float*)jjy, N, stream);
+  }
+  cudaStreamSynchronize(stream);
 
-  // Check first few against finite differences
+  // Verify numerics for first few
+  std::vector<T> hr(5), hdx(5), hdy(5), hdxy(5), jf_h(5), jx_h(5), jy_h(5);
+  cudaMemcpy(hr.data(),  dr,  5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hdx.data(), ddx, 5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hdy.data(), ddy, 5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hdxy.data(),ddxy,5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(jf_h.data(), jf, 5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(jx_h.data(), jjx,5*sizeof(T), cudaMemcpyDeviceToHost);
+  cudaMemcpy(jy_h.data(), jjy,5*sizeof(T), cudaMemcpyDeviceToHost);
+
   for(int i=0;i<5;++i){
-    T fx, dfx, dfy, dxy;
-    finite_diff<T>(hx[i], hy[i], fx, dfx, dfy, dxy);
-    printf("i=%d\n  GPU: f=%.12e dx=%.12e dy=%.12e dxy=%.12e\n  CPU: f=%.12e dx=%.12e dy=%.12e dxy=%.12e\n",
-           i, hr[i], hdx[i], hdy[i], hdxy[i], fx, dfx, dfy, dxy);
+    T fx, dfx, dfy, dxy; finite_diff<T>(hx[i], hy[i], fx, dfx, dfy, dxy);
+    printf("i=%d\n  HD : f=%.12e dx=%.12e dy=%.12e dxy=%.12e\n  MD : f=%.12e jx=%.12e jy=%.12e\n  REF: f=%.12e dx=%.12e dy=%.12e dxy=%.12e\n",
+      i, hr[i], hdx[i], hdy[i], hdxy[i], jf_h[i], jx_h[i], jy_h[i], fx, dfx, dfy, dxy);
   }
 
-  // Simple throughput timing
-  const int iters = 10;
-  float ms=0; cudaEvent_t a,b; cudaEventCreate(&a); cudaEventCreate(&b);
+  // Timing MD Jacobian path
+  const int iters=10; float ms=0; cudaEvent_t a,b; cudaEventCreate(&a); cudaEventCreate(&b);
   cudaEventRecord(a, stream);
   for(int t=0;t<iters;++t){
-    if constexpr (std::is_same<T,double>::value){
-      launch_eval_batch_double(dx_x, dx_y, dr, ddx, ddy, ddxy, N, stream);
+    if constexpr (std::is_same<T,double>::value) {
+      launch_eval_jac2_double(dx_x, dx_y, jf, jjx, jjy, N, stream);
     } else {
-      launch_eval_batch_float((float*)dx_x, (float*)dx_y, (float*)dr, (float*)ddx, (float*)ddy, (float*)ddxy, N, stream);
+      launch_eval_jac2_float((float*)dx_x, (float*)dx_y, (float*)jf, (float*)jjx, (float*)jjy, N, stream);
     }
   }
   cudaEventRecord(b, stream); cudaEventSynchronize(b);
   cudaEventElapsedTime(&ms, a, b);
-  double gsps = (double)N * iters / (ms*1e-3) / 1e9; // Gsamples/s
-  printf("Throughput: %.3f Gsamples/s (%s)\n", gsps, std::is_same<T,double>::value?"fp64":"fp32");
+  double gsps = (double)N * iters / (ms*1e-3) / 1e9;
+  printf("MD Jacobian throughput: %.3f Gsamples/s (%s)\n", gsps, std::is_same<T,double>::value?"fp64":"fp32");
 
   cudaFree(dx_x); cudaFree(dx_y); cudaFree(dr); cudaFree(ddx); cudaFree(ddy); cudaFree(ddxy);
-  cudaStreamDestroy(stream);
+  cudaFree(jf); cudaFree(jjx); cudaFree(jjy); cudaStreamDestroy(stream);
   return 0;
 }
