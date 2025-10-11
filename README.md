@@ -1,4 +1,4 @@
-cuHyperDual
+## cuHyperDual
 
 CUDA library for automatic differentiation on GPUs using **hyper-dual** and **multi-dual** numbers. You'd be surprised how useful this is. JK you wouldn't. Also it doesn't work that well yet.
 
