@@ -27,9 +27,8 @@ target_compile_options(hyperdual PRIVATE
   $<$<COMPILE_LANGUAGE:CXX>:-O3>
 )
 
-########################################
+
 # File: include/hyperdual.cuh
-########################################
 #pragma once
 #include <cuda_runtime.h>
 #include <math.h>
@@ -160,9 +159,7 @@ __host__ __device__ inline HD<T> f_xy(const HD<T>& x, const HD<T>& y){
 }
 
 
-########################################
 # File: src/kernel.cu
-########################################
 #include "hyperdual.cuh"
 
 // Evaluate f(x,y) for a batch, returning value and derivatives via hyper-dual
