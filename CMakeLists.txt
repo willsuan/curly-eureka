@@ -26,3 +26,15 @@ target_compile_options(hyperdual PRIVATE
   $<$<COMPILE_LANGUAGE:CUDA>:-O3;-Xcompiler=-O3;-lineinfo>
   $<$<COMPILE_LANGUAGE:CXX>:-O3>
 )
+
+option(BUILD_PY \"Build Python module with pybind11\" OFF)
+if(BUILD_PY)
+  find_package(pybind11 REQUIRED)
+  add_library(cuhd MODULE src/pybind_module.cpp)
+  set_target_properties(cuhd PROPERTIES PREFIX \"\" OUTPUT_NAME \"cuhd\")
+  target_link_libraries(cuhd PRIVATE pybind11::module)
+  target_include_directories(cuhd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  # Link CUDA runtime if needed
+  target_link_libraries(cuhd PRIVATE cuda)
+endif()
+
