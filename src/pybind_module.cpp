@@ -6,19 +6,15 @@
 
 namespace py = pybind11;
 
-// Expose Runner<2,2,double,Fun2From2> for a quick demo.
-// Accept NumPy arrays (contiguous) for x,y and return tuple (f0,f1,J00,J01,J10,J11)
 py::tuple jacobian_2x2_double(py::array_t<double, py::array::c_style|py::array::forcecast> x,
                               py::array_t<double, py::array::c_style|py::array::forcecast> y) {
   if (x.ndim()!=1 || y.ndim()!=1 || x.shape(0)!=y.shape(0))
     throw std::runtime_error("x and y must be 1D arrays of equal length");
   int N = static_cast<int>(x.shape(0));
 
-  // Host pointers
   const double* hx = x.data();
   const double* hy = y.data();
 
-  // Device buffers
   double *dx_x,*dx_y,*f0,*f1,*J00,*J01,*J10,*J11;
   cudaMalloc(&dx_x, N*sizeof(double));
   cudaMalloc(&dx_y, N*sizeof(double));
@@ -31,7 +27,6 @@ py::tuple jacobian_2x2_double(py::array_t<double, py::array::c_style|py::array::
   cudaMemcpy(dx_x, hx, N*sizeof(double), cudaMemcpyHostToDevice);
   cudaMemcpy(dx_y, hy, N*sizeof(double), cudaMemcpyHostToDevice);
 
-  // Run
   std::array<double*,2> inputs = { dx_x, dx_y };
   std::array<double*,2> outF   = { f0, f1 };
   std::array<double*,4> outJ   = { J00, J01, J10, J11 };
@@ -39,7 +34,6 @@ py::tuple jacobian_2x2_double(py::array_t<double, py::array::c_style|py::array::
   Runner<2,2,double,Fun2From2>::run(inputs, outF, outJ, N, s);
   cudaStreamSynchronize(s);
 
-  // Prepare outputs
   auto of0 = py::array_t<double>(N);
   auto of1 = py::array_t<double>(N);
   auto o00 = py::array_t<double>(N);
@@ -63,5 +57,5 @@ py::tuple jacobian_2x2_double(py::array_t<double, py::array::c_style|py::array::
 PYBIND11_MODULE(cuhd, m) {
   m.doc() = "cuHyperDual Python bindings (demo)";
   m.def("jacobian_2x2_double", &jacobian_2x2_double,
-        "Compute two outputs and 2x2 Jacobian columns for f via hyper-dual MD");
+        "Compute two outputs and 2x2 Jacobian columns for f via multi-dual");
 }
