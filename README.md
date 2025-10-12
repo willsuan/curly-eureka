@@ -10,6 +10,5 @@ Library for automatic differentiation on GPUs using hyper-dual and multi-dual nu
 - Generic K×M Jacobian runner for any number of inputs/outputs.
 - Mixed-precision mode: primals in `__half`, derivatives in `float`.
 - Python binding (via PyBind11) – call it from Jupyter in a few lines.
-- Numerical sanity tests vs. CPU finite differences.
-
+- 
 ## Sample Benchmarks
