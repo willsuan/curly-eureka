@@ -1,6 +1,6 @@
 ## cuHyperDual
 
-Library for automatic differentiation on GPUs using hyper-dual and multi-dual numbers.
+Library for automatic differentiation on GPUs using hyper-dual and multi-dual numbers. Work in progress.
 
 ## Features
 
