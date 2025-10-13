@@ -4,7 +4,7 @@ Header‑only CUDA AD types and kernels: Dual, HyperDual, MultiDual, MultiDual2.
 Gradients, Hessians (hyper‑dual + one‑pass), Jacobians, vector‑output per‑output Hessians.
 AoS/SoA layouts, streaming, tiled Hessians, packed storage, plans/pipelines, tests. 
 
-This project is probably altogether useless except to help me learn CUDA.
+The purpose of this project is to help me learn CUDA.
 
 ## Build
 ```bash
